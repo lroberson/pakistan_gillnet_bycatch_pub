@@ -1,0 +1,207 @@
+---
+title: "Fig2"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Figure 2
+
+Figure 2: catch averages from data
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(here)
+library(pillar)
+library(patchwork)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# top row: bycatch per year per fisher
+
+```{r top row}
+
+fisher.year <- readRDS(here("fig2_dat_year_copy.rds"))
+
+pal_13 <- c("#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf","#aec7e8","#ffbb78","#98df8a")
+
+# fleet-wide averages
+fleet_avg <- fisher.year %>%
+  group_by(year, species) %>%
+  summarise(fleet_avg = mean(avg_count, na.rm = TRUE), .groups = "drop")
+
+annot.yr <- fisher.year %>%
+  distinct(species) %>%
+  mutate(x = Inf, y = Inf, hjust = 1.2, vjust = 2.5)
+
+p.year <- ggplot(fisher.year, aes(x = year, y = avg_count, color = factor(fisher_number))) +
+  geom_line(alpha=0.5) +
+  geom_point() +
+  # Add fleet average line 
+  geom_line(data = fleet_avg, aes(x = year, y = fleet_avg),
+            color = "black", size = 1, linetype = "dashed") +
+  facet_wrap(~ species, scales = "free_y") +  # separate y-axis per catch type
+  geom_text(
+    data = annot.yr,
+    aes(x = x, y = y, label = species, hjust = hjust, vjust = vjust),
+    fontface = "bold", 
+    size=4,
+    inherit.aes = FALSE) +
+  scale_color_manual(values=pal_13,
+      guide = guide_legend(
+      nrow=2,
+      ncol = 7,          # 7 columns
+      byrow = TRUE,      # fill by row instead of by column
+      keywidth = 0.5,    # width of the legend key
+      keyheight = 1.2,   # height of the legend key
+      override.aes = list(size = 3)  # point size in legend
+    )) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid=element_blank(),
+        strip.text = element_blank(),
+        legend.title = element_text(size = 10, face="bold"),
+        legend.text  = element_text(size = 9),
+        legend.title.position = "top",
+        legend.direction = "horizontal",
+        legend.spacing.y = unit(2, "lines"),   # vertical spacing between keys
+        axis.title = element_text(size = 11, face="bold"),
+        legend.position="bottom") + 
+  labs(x = "",
+       y = "Bycatch (avg count)",
+       color = "Captain") 
+p.year
+
+```
+
+# middle row: bycatch v catch totals per fisher
+
+```{r top row}
+
+fisher.summ.long <- readRDS(here("fig2_dat_fisher_totals_copy.rds"))
+
+# labels so the species goes in teh top right corner of each facet (removed strip text to save vertical space)
+annot.totals <- fisher.summ.long %>%
+  distinct(species) %>%
+  mutate(x = Inf, y = Inf, hjust = 1.2, vjust = 2.5)
+
+p.totals <- ggplot(fisher.summ.long, aes(x=avg_tunas, y=avg_bycatch, color = fisher_number, size=n_sets)) +
+  # vertical error bars (y ± se)
+  geom_linerange(aes(ymin = avg_bycatch - se_bycatch,
+                     ymax = avg_bycatch + se_bycatch),
+                 size=0.5) +
+  # horizontal error bars (x ± se)
+  geom_linerange(aes(xmin = avg_tunas - se_tunas,
+                     xmax = avg_tunas + se_tunas),
+                 size=0.5) +
+  geom_jitter(aes(size=n_sets), alpha=0.5) +
+  facet_wrap(~species, scales = "free_y") + # manual annotation in top-right of each facet
+  geom_text(
+       data = annot.totals,
+    aes(x = x, y = y, label = species, hjust = hjust, vjust = vjust),
+    fontface = "bold", 
+    size=4,
+    inherit.aes = FALSE
+  ) +
+  #scale_color_viridis_d(option = "turbo") +  # handles >10 discrete values but it's a rainbow scale (not color blind friendly)
+  scale_color_manual(values=pal_13) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid=element_blank(),
+        strip.text = element_blank(),
+        legend.title = element_text(size = 10, face="bold"),
+        legend.title.position = "top",
+        legend.direction = "horizontal",
+        legend.text  = element_text(size = 9),
+        axis.title = element_text(size = 11, face="bold"),
+        legend.position="bottom") +
+  labs(x = "Tunas (avg kg)",
+       y = "Bycatch (avg count)",
+       color = "Captain",
+       size = "Number of sets") 
+p.totals
+
+```
+
+# target catch
+
+```{r}
+
+df.target <- readRDS(here("fig2_dat_target_copy.rds"))
+
+p.target <- ggplot(df.target, aes(x=year, y=fleet_avg, color=target_species)) +
+  geom_line(alpha=0.5) +
+  geom_point() + 
+  ggsci::scale_color_nejm(labels = c("Tuna-likes", "Other species", "Sharks and rays")) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid=element_blank(),
+        legend.title = element_text(size = 10, face="bold"),
+        legend.text  = element_text(size = 9),
+        legend.title.position = "top",
+        legend.direction = "horizontal",
+        axis.title = element_text(size = 11, face="bold"),
+        legend.position="bottom") + 
+  labs(x = "",
+       y = "Group avg (kg)",
+       color = "Retained species")
+p.target
+  
+```
+
+# combine - MS v2
+5 panel figure (legends in 6th panel blank space )
+```{r}
+
+library(grid)
+library(gridExtra)
+
+leg_shared_color <- cowplot::get_legend(
+  p.year + theme(legend.position = "right")
+)
+leg_totals_nsets <- cowplot::get_legend(
+  p.totals +
+    theme(legend.position = "right") +
+    guides(color = "none")
+)
+leg_target <- cowplot::get_legend(
+  p.target + theme(legend.position = "right"))
+
+p.year_noleg   <- p.year   + theme(legend.position = "none")
+p.totals_noleg <- p.totals + theme(legend.position = "none")
+p.target_noleg <- p.target + theme(legend.position = "none")
+
+left_col <- arrangeGrob(
+  ggplotGrob(p.year_noleg),
+  ggplotGrob(p.totals_noleg),
+  ncol = 1,
+  heights = c(1, 1)
+)
+
+legend_stack <- arrangeGrob(
+  leg_target,
+  leg_shared_color,
+  leg_totals_nsets,
+  ncol = 1,
+  heights = c(1, 1, 1)
+)
+right_col <- arrangeGrob(
+  ggplotGrob(p.target_noleg),
+  legend_stack,
+  ncol = 1,
+  heights = c(1, 1)
+)
+
+final_plot <- arrangeGrob(
+  left_col,
+  right_col,
+  ncol = 2,
+  widths = unit.c(
+    unit(0.6, "npc"),  # LEFT column (60%)
+    unit(0.4, "npc")   # RIGHT column (40%)
+  )
+)
+grid.newpage()
+grid.draw(final_plot) 
+
+```
+

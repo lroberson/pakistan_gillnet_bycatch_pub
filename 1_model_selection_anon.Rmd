@@ -1,0 +1,225 @@
+---
+title: "stepwise model selection"
+
+---
+
+# Model selection procedure
+
+Variable descriptions:
+
+- set_ID: unique set identifier                 
+- trip_ID: unique trip identifier (not used - missing data & errors)                
+- fisher_ID: unique identifier for the captain
+- year: calendar year (2012-2016) 
+- fishing_date_mod: day-month-year extracted from the dttm 
+- month_num: numeric month extracted from fishing_date              
+- set_time_mod_corr: time the gear was set (HH:MM:SS)
+- latitude_set_dd_mod: latitude the gear was set in decimal degrees  
+- longitude_set_dd_mod: longitude where gear was set
+- all_tuna_likes_kg: total kg of all tuna and tuna like species         
+- non_tuna_retained_kg: total kg of other retained species  
+- turtles_cnt: sea turtles (all species combined, total count)                
+- dolphins_cnt: (all species combined, total count)             
+- fishing_method: Three categories in local names ("Hojo/oojo", "Rach Jal", "Jaal Bodo")         
+- fishing_method_2: Simplified to two categories: Surface (Hojo/oojo + Rach Jal) and Bottom gillnets (Jaal Bodo)       
+- no_crew: Number of crew onboard                
+- no_panel: Number of gillnet panels              
+- length_panel_m: length of each panel in meters         
+- width_net_m: width of each panel in meters   
+- net_area_m2: Effort offset (no_panel * length_panel_m * width_net_m)
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(here)
+library(pillar)
+library(mgcv)
+library(MuMIn)
+library(broom)
+library(glmmTMB)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# prep data
+```{r}
+glimpse(model.df.wide) # 5,599 sets
+
+model.df.v2 <- model.df.wide %>% 
+  filter(fisher_ID != 14) %>% # drop fisher 14 (they drop out anyways due to many NA variables)
+  filter(!month_num %in% c(6,7)) %>% # remove those closed season sets from fisher 4 (experimental trials, not normal fishing operations)
+  mutate(across(c(fisher_ID, fishing_method, fishing_method_2), as.factor)) 
+# final model df has 5,502 sets 
+
+# format time as hour.decimal
+class(model.df.v2$set_time_mod_corr)
+model.df.v2$set_time_mod_corr_num <- as.numeric(model.df.v2$set_time_mod_corr) / 3600
+model.df.v2$set_time_mod_corr_num <- round(model.df.v2$set_time_mod_corr_num * 6) / 6
+model.df.v2$set_time_mod_corr_num <- round(model.df.v2$set_time_mod_corr_num, 1)
+
+```
+
+# recode month as chronological month of the fishing season
+
+```{r recode month}
+model.df.v2 <- model.df.v2 %>%
+  mutate(
+    cal_month = month(fishing_date_mod),          # 1 = Jan, ..., 12 = Dec
+    season_month = case_when(
+      cal_month >= 8  ~ cal_month - 7,     # Aug–Dec 1–5
+      cal_month <= 5  ~ cal_month + 5,     # Jan–May 6–10
+      TRUE            ~ NA_real_           # Jun–Jul (no fishing)
+    )
+  )
+```
+
+# Dolphins
+
+```{r Dolphins}
+
+##_______________________ DOLPHINS
+dols.global <- gam(dolphins_cnt ~ year + s(all_tuna_likes_kg) + s(non_tuna_retained_kg) + s(season_month, k=3) + s(latitude_set_dd_mod, longitude_set_dd_mod) + s(set_time_mod_corr_num) + s(no_crew) + fishing_method_2 + s(fisher_ID, bs = "re"), 
+                   offset = log(net_area_m2), data = model.df.v2, family = tw(), na.action="na.omit", method="REML", select=TRUE)
+AIC(dols.global) 
+summary(dols.global) 
+
+##------------- check negative binomial
+dols.nb <- update(dols.global, family = nb())
+AIC(dols.nb, dols.global) # tweedie is better
+
+##-------------------- Compare to fixed effect
+dols.global.fe <- update(dols.global, .~. -s(fisher_ID, bs = "re") + fisher_ID)
+AIC(dols.global.fe) # only ~0.3 AIC points worse with fixed effect captain term compared to RE
+summary(dols.global.fe) # SEs for captain coefficients are huge
+
+##----------------- comapre to the local names fishign method
+dols.fe.2 <- update(dols.global.fe, .~. - fishing_method_2 + fishing_method)
+AIC(dols.fe.2) # worse and still not significant
+
+##---------------- Simplify models and adjust parameterization
+dols.fe.3 <- update(dols.global.fe, .~. - s(set_time_mod_corr_num) - fishing_method_2)
+# continue simplifying and checking
+
+##-----------------Compare to fixed effect with sum contrast coding & paraPenn on captian term
+# set up paraPen
+NoCoefs <- length(unique(model.df.v2$fisher_ID))-1 
+pp <- list(fisher_ID = list(rank = NoCoefs, diag(NoCoefs)))
+# set up contrast coding
+contrasts(model.df.v2$fisher_ID) <- contr.sum
+
+dols.fe.best <- gam(dolphins_cnt ~ year + s(all_tuna_likes_kg) + s(latitude_set_dd_mod, longitude_set_dd_mod, k=50) + fisher_ID,
+    offset = log(net_area_m2), data = model.df.v2, family = tw(), na.action="na.omit", method="REML", paraPen=pp, select=TRUE)
+
+##------------------- compare final model minus captain effect 
+dols.test <- update(dols.fe.best, .~. -fisher_ID)
+
+```
+
+# Sea turtles
+```{r sea turtles}
+
+##________________________SEA TURTLES
+turts.global <- gam(turtles_cnt  ~ year + s(all_tuna_likes_kg) + s(non_tuna_retained_kg) + s(season_month, k=3) + s(latitude_set_dd_mod, longitude_set_dd_mod, k=50) + s(set_time_mod_corr_num) + s(no_crew) + fishing_method_2 + s(fisher_ID, bs = "re"), 
+  offset = log(net_area_m2), data = model.df.v2, family = tw(), na.action="na.omit", method="REML", select=TRUE)
+AIC(turts.global) 
+summary(turts.global) 
+
+##---------------compare to negative binomial
+turts.nb <- update(turts.global, family = nb())
+AIC(turts.nb, turts.global) # tweedie much better
+
+##-------------------- Compare to fixed effect
+
+turts.global.fe <- update(turts.global, .~. - s(fisher_ID, bs = "re") + fisher_ID)
+AIC(turts.global.fe) # beats random effect
+summary(turts.global.fe)
+
+# Basic GAM diagnostics
+gam.check(mod)
+# Concurvity
+concurvity(mod, full = TRUE)
+# Smooth term plots
+plot(mod, pages = 1, residuals = TRUE, shade = TRUE)
+# DHARMa residual diagnostics
+library(DHARMa)
+sim <- simulateResiduals(mod)
+plot(sim)
+testDispersion(sim)
+testZeroInflation(sim)
+
+
+##---------------- Simplify models and adjust parameterization
+
+turts.fe.2 <- update(turts.global.fe, .~. -s(non_tuna_retained_kg))
+
+turts.fe.3 <- udpate(turts.fe.2, .~. -fishing_method_2 + fishing_method) # compare the 3 category local name factor to the simplified factor with 2 levels
+
+# continue subtracting terms and checking AIC/summary/diagnostics
+# adjust ks where necessary
+# check smooth edfs to see if relationship looks linear
+# etc
+
+
+##-----------------Compare to fixed effect with sum contrast coding & paraPenn on captian term
+# set up paraPen
+NoCoefs <- length(unique(model.df.v2$fisher_ID))-1 
+pp <- list(fisher_ID = list(rank = NoCoefs, diag(NoCoefs)))
+# set up contrast coding
+contrasts(model.df.v2$fisher_ID) <- contr.sum
+
+turts.fe.best <- gam(turtles_cnt ~ year + s(all_tuna_likes_kg) + s(season_month, k = 3) + 
+    s(latitude_set_dd_mod, longitude_set_dd_mod) + s(no_crew) + fisher_ID,
+    offset = log(net_area_m2), data = model.df.v2, family = tw(), na.action="na.omit", method="REML", select=TRUE)
+# no evidence the paraPen improved the sea turtles model
+
+##------------------- compare final model minus captain effect 
+turts.test <- update(turts.fe.best, .~. - fisher_ID)
+AIC(turts.test) # worse wihtout captain
+
+# check model diagnostics
+```
+
+# save best model outputs
+model summaries for results table
+GAM plots
+```{r save outputs}
+
+library(openxlsx) 
+library(mgcViz)
+library(pixiedust)
+library(gratia) 
+
+#mod <- dols.fe.best
+mod <- turts.fe.best
+
+summary.mod <- summary(mod)
+param <- rownames(summary.mod$p.table)
+coeffs.out <- cbind(param, as.data.frame(summary.mod$p.table, rownames=NULL))
+mod.out <- openxlsx::createWorkbook()
+mod.glance <-  broom::glance(mod)
+mod.sum <- pixiedust::dust(mod, glance_foot=TRUE) %>%
+  sprinkle(col=2:4, round=4) %>%
+  sprinkle(cols=5, fn=quote(pvalString(value))) %>%
+  sprinkle(rows = 1, border = "top") %>%
+  sprinkle(cols = c(2, 5), round = 2, na_string = "",
+           part = "foot") %>%
+  sprinkle(rows = 1, border = "top", part = "foot") %>%
+  sprinkle_print_method("console")
+mod.out <- createWorkbook()
+addWorksheet(mod.out, "gam_glance")
+addWorksheet(mod.out, "gam_summ")
+addWorksheet(mod.out, "coeffs_full")
+writeData(mod.out, sheet = "gam_glance", x=mod.glance)
+writeData(mod.out, sheet = "gam_summ", x=mod.sum)
+writeData(mod.out, sheet = "coeffs_full", x=coeffs.out)
+
+
+# Diagnostics plots
+appraise(dols.fe.best)
+appraise(turts.fe.best)
+
+# smooth plots 
+smooths.dols <- gratia::draw(dols.fe.best, residuals = TRUE, rug = FALSE) & theme_bw(base_size = 12) 
+smooths.turts <- gratia::draw(turts.fe.best, residuals = TRUE, rug = FALSE) & theme_bw(base_size = 12) 
+
+```

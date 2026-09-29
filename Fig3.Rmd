@@ -1,0 +1,119 @@
+---
+title: "Fig3"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(here)
+library(pillar)
+library(patchwork)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# ordered version showing average bycatch 
+- make the color of hte dots a continuous scale of each fisher's average bycatch per set
+
+```{r ms fig 2}
+
+# load plot data
+fig3.dat <- readRDS(here("Fig_3_emms_v_coeffs_pdat_copy.rds"))
+glimpse(fig3.dat)
+
+# plot  
+warm <- colorRampPalette(c("#D4A017", "#E06600", "#B30000")) 
+
+##__________________ Coefficients plots (bottom row)
+dol_labels <- fig3.dat  %>% distinct(fisher_ID_dolsorder, fisher_number)
+
+turt_labels <- fig3.dat %>% distinct(fisher_ID_turtsorder, fisher_number)
+
+dol_label_vec <- setNames(
+  dol_labels$fisher_number,
+  dol_labels$fisher_ID_dolsorder)
+
+turt_label_vec <- setNames(
+  turt_labels$fisher_number,
+  turt_labels$fisher_ID_turtsorder)
+
+dol.coefs <- fig3.dat  %>%
+  filter(species=="Dolphins") %>%
+  ggplot(aes(x = fisher_ID_dolsorder, y = coeffs_estimate, color = avg_bycatch, shape = sig_dol)) +
+  geom_point(size = 3, show.legend=TRUE) + # show the shape legend (but not the color one)
+  geom_errorbar(
+  data = ~subset(.x, !is.na(SE_coeffs)),
+  aes(
+    ymin = coeffs_estimate - SE_coeffs,
+    ymax = coeffs_estimate + SE_coeffs,
+    color = avg_bycatch
+  ),
+  width = 0.1,
+  alpha = 0.5
+) +
+  scale_colour_gradientn(colours = warm(100), guide = "none") + 
+  scale_shape_manual(
+    values = c("TRUE" = 17,     # triangle 
+               "FALSE" = 4),    # cross / X
+    name = "Significance", 
+    labels = c(
+      "FALSE" = expression("No (" * italic(p) >= 0.05 * ")"),
+      "TRUE"  = expression("Yes (" * italic(p) < 0.05 * ")")
+    ), 
+    drop=TRUE,
+    na.translate = FALSE # removes NA from legend
+    ) +
+  scale_x_discrete(drop = FALSE, labels=dol_label_vec) +
+  #coord_cartesian(ylim = c(-3, 1)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(y = "Regression Coefficient", x = "Captain", color="", shape="Significance") +
+  theme_bw() +
+  theme(legend.position = c(0.8, 0.2), # bottom- right
+        legend.box="horizontal", # place legends side by side
+    legend.background = element_rect(fill="white", color="black"),
+    panel.grid=element_blank()
+  )
+dol.coefs
+
+
+##____________________ EMM plots (top row)
+dols.emm <- fig3.dat  %>%
+  filter(species == "Dolphins") %>%
+  ggplot(aes(x = fisher_ID_dolsorder, y = emm_response, color=avg_bycatch)) +
+  geom_point(size=3) +
+  geom_errorbar(aes(ymin = lowerCL_emm, ymax = upperCL_emm, color=avg_bycatch), width = 0.1, alpha=0.5) +
+  scale_colour_gradientn(colours = warm(100)) +
+  facet_wrap(~species, ncol = 2, scales = "free_y") +
+  labs(y = "EMM response", x = "", color="Avg Dolphin \nBycatch") +
+  theme_bw() +
+  theme(strip.text = element_text(face = "bold", size = 11),
+        legend.position = c(0.15, 0.75), 
+        legend.background = element_rect(fill="white", color="black"),
+        panel.grid=element_blank())
+dols.emm
+
+turts.emm <- fig3.dat  %>%
+  filter(species == "Turtles") %>%
+  ggplot(aes(x = fisher_ID_turtsorder, y = emm_response, color=avg_bycatch)) +
+  geom_point(size=3) +
+  geom_errorbar(aes(ymin = lowerCL_emm, ymax = upperCL_emm, color=avg_bycatch), width = 0.1, alpha=0.5) +
+  scale_colour_gradientn(colours = warm(100)) +
+  facet_wrap(~species, ncol = 2, scales = "free_y") +
+  labs(y = "EMM response", x = "", color="Avg Turtle \nBycatch") +
+  theme_bw() + 
+  theme(strip.text = element_text(face = "bold", size = 11),
+        legend.position = c(0.15, 0.75),
+        legend.background = element_rect(fill="white", color="black"),
+        panel.grid=element_blank())
+turts.emm
+
+comb.ordered <- (dols.emm | turts.emm) / (dol.coefs | turt.coefs) +
+  plot_layout(heights = c(1, 1)) & 
+  theme(legend.key.size = unit(0.3, "cm"),
+        legend.title = element_text(size = 9))
+comb.ordered
+
+```

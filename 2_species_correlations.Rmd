@@ -1,0 +1,19 @@
+---
+title: "species correlations"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(here)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# load data
+```{r}
+
+```
+
