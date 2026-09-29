@@ -6,14 +6,75 @@ editor_options:
 ---
 
 ```{r setup, include=FALSE}
+
 library(tidyverse)
 library(here)
+library(MASS)
 
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # load data
-```{r}
+```{r data}
+
+fisher.coeffs <- read_csv(here("fisher_reg_coeffs_combined_copy.csv"))
+glimpse(fisher.coeffs)
+
+emmeans.fishers <- read_csv(here("emmeans_fishers_ms_revision_copy.csv"))
+glimpse(emmeans.fishers)
+
+mod.dols <- readRDS(here("dolphins_bestmod_FE_pp_copy.rds"))
+mod.turt <- readRDS(here("turtles_bestmod_FE_copy.rds"))
+```
+
+# Correlation test on regression coefficients
+
+```{r cor test coeffs}
+#___________ no weighting or bootstrapping 
+coeffs.wide <- fisher.coeffs %>% dplyr::select(fisher_ID, species, estimate) %>% pivot_wider(names_from = species, values_from = estimate)
+
+cor.test(coeffs.wide$Dolphins, coeffs.wide$Turtles, method = "pearson")
+```
+
+# Correlation test on EMMs
+
+```{r cor test EMMs}
+
+emms.wide <- emmeans.fishers %>% dplyr::select(fisher_ID, species, response) %>% pivot_wider(names_from = species, values_from = response)
+
+cor.test(emms.wide$Dolphins, emms.wide$Turtles, method= "pearson")
 
 ```
 
+# Bootstrap the regression coefficients
+
+```{r bootstrapped coeffcients}
+
+n_boot <- 1000
+# fisher coefficient terms
+coef_terms <- grep("^fisher_ID",  names(coef(mod.dols)), value = TRUE)
+
+# coefficient vectors
+mu_dol  <- coef(mod.dols)[coef_terms]
+mu_turt <- coef(mod.turt)[coef_terms]
+
+# full covariance matrices
+Sigma_dol  <- vcov(mod.dols)[coef_terms, coef_terms]
+Sigma_turt <- vcov(mod.turt)[coef_terms, coef_terms]
+
+boot_corrs_coef <- numeric(n_boot)
+
+for(i in seq_len(n_boot)){
+  draw_dol  <- MASS::mvrnorm(
+    n = 1, mu = mu_dol, Sigma = Sigma_dol)
+  draw_turt <- MASS::mvrnorm(
+    n = 1, mu = mu_turt, Sigma = Sigma_turt)
+  boot_corrs_coef[i] <- cor(draw_dol, draw_turt)
+}
+
+mean(boot_corrs_coef)
+sd(boot_corrs_coef)
+quantile(boot_corrs_coef, c(0.025, 0.975))
+cor(mu_dol, mu_turt) 
+
+```
